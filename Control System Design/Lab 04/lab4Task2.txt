@@ -1,0 +1,148 @@
+#include "F2806x_Device.h"
+
+interrupt void adcISR(void);
+interrupt void timerISR(void);
+float32 VR1[100];
+float32 VR2[100];
+int count = 0;
+Uint32 i = 0;
+int count2 = 0;
+Uint16 y1;
+Uint16 y2;
+/**
+ * main.c
+ */
+int main(void)
+{
+    asm(" EALLOW");
+    SysCtrlRegs.WDCR = 0x68;
+
+    //Setting Up Clock Timer
+    SysCtrlRegs.PLLSTS.bit.DIVSEL = 0;
+    SysCtrlRegs.PLLSTS.bit.MCLKOFF = 1;
+    SysCtrlRegs.PLLCR.bit.DIV = 0;
+    while(SysCtrlRegs.PLLSTS.bit.PLLLOCKS != 1) {
+
+    }
+
+    SysCtrlRegs.PLLSTS.bit.MCLKOFF = 0;
+    SysCtrlRegs.PLLSTS.bit.DIVSEL = 3;
+
+
+    //ADC is now clocked.
+    SysCtrlRegs.PCLKCR0.bit.ADCENCLK = 1;
+    asm(" NOP");
+    asm(" NOP");
+
+
+    //Setting ADC to non-overlap and setting the divide to 4.
+    AdcRegs.ADCCTL2.bit.ADCNONOVERLAP = 1;
+    AdcRegs.ADCCTL2.bit.CLKDIV4EN = 0;
+    AdcRegs.ADCCTL2.bit.CLKDIV2EN = 1;
+
+    //Enabling the module power supply
+    AdcRegs.ADCCTL1.bit.ADCPWDN = 1;
+    AdcRegs.ADCCTL1.bit.ADCBGPWD = 1;
+    AdcRegs.ADCCTL1.bit.ADCREFPWD = 1;
+    AdcRegs.ADCCTL1.bit.ADCENABLE = 1;
+
+    while(i < 40000)
+    {
+        i++;
+    }
+
+    AdcRegs.ADCSOC0CTL.bit.CHSEL = 0; //Selects A0 as channel
+    AdcRegs.ADCSOC0CTL.bit.ACQPS = 0x15;
+    AdcRegs.ADCSOC0CTL.bit.TRIGSEL = 1;
+
+    AdcRegs.ADCSOC1CTL.bit.CHSEL = 1; //Selects A1 as channel
+    AdcRegs.ADCSOC1CTL.bit.ACQPS = 0x15;
+    AdcRegs.ADCSOC1CTL.bit.TRIGSEL = 1;
+
+    //Enable interrupt ADCINT1 and ADCINT2
+    AdcRegs.INTSEL3N4.bit.INT3E = 1;
+    AdcRegs.INTSEL3N4.bit.INT4E = 1;
+
+    //Configure the trigger to EOC1 and EOC 2 using ADCInterrput1 and 2
+    AdcRegs.INTSEL3N4.bit.INT3SEL = 0;//LinksEOC0 to ADCINT3
+    AdcRegs.INTSEL3N4.bit.INT4SEL = 1;//Links EOC1 to ADCINT4
+
+
+
+    AdcRegs.ADCCTL1.bit.INTPULSEPOS = 1;
+
+
+    //Setting up CPU timer
+    CpuTimer0Regs.TCR.bit.TSS = 1;
+    CpuTimer0Regs.PRD.all = 99999;
+    CpuTimer0Regs.TCR.bit.TRB = 1;
+    CpuTimer0Regs.TCR.bit.TIE = 1;
+    CpuTimer0Regs.TCR.bit.TSS = 0;
+
+
+    //Setting up PIE table
+    PieCtrlRegs.PIECTRL.bit.ENPIE = 1;
+    PieVectTable.ADCINT3 = &adcISR;
+    PieVectTable.ADCINT4 = &adcISR;
+    PieVectTable.TINT0 = &timerISR;
+
+    PieCtrlRegs.PIEIER1.bit.INTx7 = 1;
+    PieCtrlRegs.PIEIER10.bit.INTx3 = 1;
+    PieCtrlRegs.PIEIER10.bit.INTx4 = 1;
+
+    PieCtrlRegs.PIEACK.all = PIEACK_GROUP1 | PIEACK_GROUP10;
+
+    //Setting up interrupt at CPU level
+    IER = 0x201;
+    EINT;
+
+    SysCtrlRegs.WDCR = 0x28;
+    asm(" EDIS");
+
+
+    while(1)
+    {
+        asm(" EALLOW");
+        SysCtrlRegs.WDKEY = 0x55;
+        SysCtrlRegs.WDKEY = 0xAA;
+        asm(" EDIS");
+    }
+
+    return 0;
+}
+
+interrupt void timerISR(void)
+{
+    count2++;
+    PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
+}
+
+interrupt void adcISR(void)
+{
+    y1 = AdcResult.ADCRESULT0;
+    y2 = AdcResult.ADCRESULT1;
+    if(count < 100)
+    {
+        VR1[count] = ((float32)y1 * 3.3)/4096;
+        VR2[count] = ((float32)y2 * 3.3)/4096;
+        count++;
+    }
+
+    else
+    {
+        int a;
+        for(a = 0; a < 99; a++) //Shifting all the values down one
+        {
+            VR1[a] = VR1[a+1];
+            VR2[a] = VR2[a+1];
+        }
+        VR1[99] = ((float32)y1 * 3.3)/4096;
+        VR2[99] = ((float32)y2 * 3.3)/4096;
+    }
+
+    AdcRegs.ADCINTFLGCLR.bit.ADCINT3 = 1;
+    AdcRegs.ADCINTFLGCLR.bit.ADCINT4 = 1;
+    PieCtrlRegs.PIEACK.all = PIEACK_GROUP10;
+}
+
+

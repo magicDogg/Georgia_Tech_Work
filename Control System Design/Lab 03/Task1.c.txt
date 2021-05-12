@@ -1,0 +1,87 @@
+#include "F2806x_Device.h"
+
+
+interrupt void YourISR(void);
+
+
+// Declare global variables for subroutine YourISR here
+int count;
+
+int main(void)
+{
+    asm(" EALLOW");             // Activate an access to restricted registers
+    SysCtrlRegs.WDCR = 0x28;    // Deactivate WatchDog Timer
+
+    //Set MUXs
+    GpioCtrlRegs.GPAMUX1.bit.GPIO9 = 0;  // LED1
+
+    //Set Directions
+    GpioCtrlRegs.GPADIR.bit.GPIO9 = 1;   // Output LED1
+
+    // Basic set up in order to set up correct frequencies
+
+    // Follow the chart to set up Clock Timer
+    SysCtrlRegs.PLLSTS.bit.DIVSEL = 0;
+    SysCtrlRegs.PLLSTS.bit.MCLKOFF = 1;
+    SysCtrlRegs.PLLCR.bit.DIV = 0;
+    while(SysCtrlRegs.PLLSTS.bit.PLLLOCKS != 1) { } 
+    SysCtrlRegs.PLLSTS.bit.MCLKOFF = 0;
+    SysCtrlRegs.PLLSTS.bit.DIVSEL = 3;
+
+    // Set Timer frequency
+    CpuTimer0Regs.PRD.all = 4999999;
+
+    // Preparation steps to use CPU Timer 0
+    CpuTimer0Regs.TCR.bit.TSS = 1;
+    CpuTimer0Regs.TCR.bit.TRB = 1;
+    CpuTimer0Regs.TCR.bit.TIE = 1;
+    CpuTimer0Regs.TCR.bit.TSS = 0;
+
+
+    // Set up to use interrupt services
+
+    // Load the PIE Vector Table
+    PieCtrlRegs.PIECTRL.bit.ENPIE = 1;
+    PieVectTable.TINT0 = &BlinkLED1;
+
+    // Enable Interrupts at the PIE Level
+    PieCtrlRegs.PIEIERa.bit.INTx7 = 1;
+    PieCtrlRegs.PIEACK.all = 1;
+
+    // Enable interrupts at the CPU Level
+    IER = 1;
+    EINT;
+
+    SysCtrlRegs.WDCR = 0x68;    // Activate WatchDog Timer again
+
+    asm(" EDIS");               // Deactivate an access to restricted registers
+
+    while(1)
+    {
+        // Reset WatchDog Timer logics
+        asm(" EALLOW");
+        SysCtrlRegs.WDKEY = 0x55;
+        SysCtrlRegs.WDKEY = 0xAA;
+        asm(" EDIS");
+    }
+
+    return 0;
+}
+
+
+
+interrupt void BlinkLED1(void)
+{
+    if (count % 2 == 0)
+        GpioDataRegs.GPASET.bit.GPIO9 = 1;    // Light the LED1
+    else
+        GpioDataRegs.GPACLEAR.bit.GPIO9 = 1;  // Otherwise, clear the light from LED1
+
+    count++;
+
+    if(count > 1000)
+        count = 0;
+
+    PieCtrlRegs.PIEACK.all = 1; // This one enables PIE to drive a pulse into the CPU; going back to running CPU mode to go back to use while loop
+
+}

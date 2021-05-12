@@ -1,0 +1,138 @@
+#include "F2806x_Device.h"
+
+
+interrupt void YourISR(void);
+
+// Declare global variables for subroutine YourISR here
+int count;
+int bit1;
+int bit2;
+int bit3;
+int bit4;
+int remainder;
+
+
+int main(void)
+{
+    asm(" EALLOW");             // Activate an access to restricted registers
+    SysCtrlRegs.WDCR = 0x28;    // Deactivate WatchDog Timer
+
+    //Set MUXs
+    GpioCtrlRegs.GPAMUX1.bit.GPIO9 = 0;  // LED1
+    GpioCtrlRegs.GPAMUX1.bit.GPIO11 = 0; // LED2
+    GpioCtrlRegs.GPBMUX1.bit.GPIO34 = 0; // LED3
+    GpioCtrlRegs.GPBMUX1.bit.GPIO41 = 0; // LED4
+
+    //Set Directions
+    GpioCtrlRegs.GPADIR.bit.GPIO9 = 1;   // Output LED1
+    GpioCtrlRegs.GPADIR.bit.GPIO11 = 1;  // Output LED2
+    GpioCtrlRegs.GPBDIR.bit.GPIO34 = 1;  // Output LED3
+    GpioCtrlRegs.GPBDIR.bit.GPIO41 = 1;  // Output LED4
+
+// Basic set up in order to set up correct frequencies
+
+// Follow the chart to set up Clock Timer
+SysCtrlRegs.PLLSTS.bit.DIVSEL = 0;
+SysCtrlRegs.PLLSTS.bit.MCLKOFF = 1;
+SysCtrlRegs.PLLCR.bit.DIV = 18;
+while(SysCtrlRegs.PLLSTS.bit.PLLLOCKS != 1) { } 
+SysCtrlRegs.PLLSTS.bit.MCLKOFF = 0;
+SysCtrlRegs.PLLSTS.bit.DIVSEL = 2;
+
+// Set Timer frequency
+CpuTimer0Regs.PRD.all = 4499999;
+
+// Preparation steps to use CPU Timer 0
+CpuTimer0Regs.TCR.bit.TSS = 1;
+CpuTimer0Regs.TCR.bit.TRB = 1;
+CpuTimer0Regs.TCR.bit.TIE = 1;
+CpuTimer0Regs.TCR.bit.TSS = 0;
+
+
+// Set up to use interrupt services
+
+// Load the PIE Vector Table
+PieCtrlRegs.PIECTRL.bit.ENPIE = 1;
+PieVectTable.TINT0 = &BlinkLED1;
+
+// Enable Interrupts at the PIE Level
+PieCtrlRegs.PIEIERa.bit.INTx7 = 1;
+PieCtrlRegs.PIEACK.all = 1;
+
+// Enable interrupts at the CPU Level
+IER = 1;
+EINT;
+
+
+
+    SysCtrlRegs.WDCR = 0x68;    // Activate WatchDog Timer again
+
+    asm(" EDIS");               // Deactivate an access to restricted registers
+
+    while(1)
+    {
+        // Reset WatchDog Timer logics
+        asm(" EALLOW");
+        SysCtrlRegs.WDKEY = 0x55;
+        SysCtrlRegs.WDKEY = 0xAA;
+        asm(" EDIS");
+    }
+
+    return 0;
+}
+
+
+
+interrupt void BlinkLED1(void)
+{
+    // Reset every bit by 0
+    bit1 = 0;
+    bit2 = 0;
+    bit3 = 0;
+    bit4 = 0;
+
+    // Initialize remainder value
+    remainder = count;
+    
+    // Clear up all the LED light
+    GpioDataRegs.GPACLEAR.bit.GPIO9 = 1;
+    GpioDataRegs.GPACLEAR.bit.GPIO11 = 1;
+    GpioDataRegs.GPBCLEAR.bit.GPIO34 = 1;
+    GpioDataRegs.GPBCLEAR.bit.GPIO41 = 1;
+
+    // 4-bits LED Array Set up logic
+    if(remainder >= 8)
+    {
+        bit4 = 1;
+        remainder-=8;
+    }
+    if(remainder >= 4)
+    {
+        bit3 = 1;
+        remainder-=4;
+    }
+    if(remainder >= 2)
+    {
+        bit2 = 1;
+        remainder-=2;
+    }
+    if(remainder >= 1)
+    {
+        bit1 = 1;
+        remainder-=1;
+    }
+
+    // Light the LEDs based on the logic
+    GpioDataRegs.GPASET.bit.GPIO9 = bit1;
+    GpioDataRegs.GPASET.bit.GPIO11 = bit2;
+    GpioDataRegs.GPBSET.bit.GPIO34 = bit3;
+    GpioDataRegs.GPBSET.bit.GPIO41 = bit4;
+
+    count++;
+
+    if(count = 16)
+        count = 0;
+
+    PieCtrlRegs.PIEACK.all = 1; // This one enables PIE to drive a pulse into the CPU; going back to running CPU mode to go back to use while loop
+
+}
